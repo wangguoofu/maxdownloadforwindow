@@ -1,0 +1,395 @@
+//to do 
+/*
+""" Parse the commands file
+:Parameters:
+cmds_file
+the commands file
+bl_scp
+BootloaderScp object
+bl_emulation
+Emulation mode (True/False)
+"""
+*/
+#include "ScpCmd.h" 
+#include "linefile.h"
+#include "max_debug.h"
+#include "max_download.h"
+#include "lineop.h"
+#include "BootloaderScp.h"
+#include "bufferfile.h"
+#include "max_delay.h"
+#include "masterthread.h"
+
+extern int serial_fd;
+
+#define TRY_TIMES (5)
+static int _verbose = 1;
+//static int _extra_verbose = 1;
+static char line_str[MAX_FILE_NAME_LEN];
+static char last_file[MAX_FILE_NAME_LEN];
+static char cmd[40]={'\0'};
+static char last_cmd[40]={'\0'};
+static unsigned char fdata[1024];
+scpcmd_data expected_cmd_v;
+MasterThread *pMasterThread;
+bool stopSend = false;
+
+void serial_sender_stop(bool flag)
+{
+    stopSend = flag;
+}
+
+int serial_sender_parse_scpcmd_file(LINEFILE* cmds_file, int bl_emulation)
+{
+  char *pck_filter = NULL;
+  char *file_name = NULL;
+  int id = 0, isconnect_cmd = 0, ignorlength =0;
+  int result = 0, ret = 0;
+  unsigned char tries = 0, wtries= 0;
+  scpcmd_data *scp_cmd = NULL, *expected_cmd = NULL;  
+  int packet = 0;
+  int count = 0;
+  int times = TRY_TIMES;
+  int connect_timeout = 0;//200ms
+  //int reset_delay = 0;
+
+  if(bl_emulation)
+  {
+    pck_filter = "bl";
+    MAXD_PRINT("[INFO] Emulation mode\n");
+  }
+  else
+  {
+    pck_filter = "host";
+  }
+
+session_begin:
+  pMasterThread->emitResponse("session begin:%d",TRY_TIMES-times);
+  MAXD_PRINT("times=&&&&&&&%d\n",times);
+  //bootloaderscp__init__();
+  if(times ==0 ) return -1;
+  times--;
+  //if(times!=TRY_TIMES-1) 
+  //	max_delay(2000000);//dleay 2s
+
+  MAXD_PRINT("Start SCP session (use -v for details)\n");
+  bootloaderscp_setTimeOut(2000000);//2s
+  linefile_seekbegin(cmds_file);
+  if(!connect_timeout)
+  {
+  	connect_timeout = 200000;//200ms  
+  }
+  else
+  {
+	//connect_timeout +=100000;
+  }
+
+  while(linefile_get(line_str, MAX_FILE_NAME_LEN, cmds_file))
+  {
+    //MAXD_PRINT("%s\n", line_str);
+    file_name=line_strip(line_str);
+    //MAXD_PRINT("after strip:%s\n", file_name);
+    
+    result = line_contains(file_name, pck_filter);
+
+    line_get_id_cmd(file_name, &id, cmd);
+
+    //MAXD_PRINT("id = %d\n", id);
+    //MAXD_PRINT("cmd = %s\n", cmd);
+
+    if(id == 0)
+    {
+      MAXD_PRINT("error: wrong filename:%s\n",file_name);
+      return -1;
+    }
+
+    if(result == 0)
+    {
+      isconnect_cmd =!strcmp(cmd, "connection_reply");
+      //ignorlength = !strcmp(cmd, "hello_reply");
+
+      if(isconnect_cmd)
+        tries = 10;//200;
+      else
+        tries = 5;
+
+      while(tries)
+      {
+	if(_verbose&&!isconnect_cmd)
+    {
+      pMasterThread->emitResponse("%d WAIT< %s", id, cmd);
+	  MAXD_PRINT("%d WAIT< %s\n", id, cmd);
+    }
+	
+	scp_cmd = bootloaderscp_readPacket(isconnect_cmd, ignorlength);
+    //if(serial_fd<0)
+    //	goto session_begin;
+	
+	if(scp_cmd!=NULL)
+	  break;
+	else
+	{
+	  //if(id!=2) goto session_begin;
+          if(!isconnect_cmd)
+	  	MAXD_PRINT("error: read packet error occur. #%d\n",tries);
+	  tries = tries -1;
+	  if(!tries)
+	    goto session_begin;//return -1;
+	  else
+	    {
+	      int error = 0;
+	      //Re-sent last packet
+          wtries = 5;
+	      /*
+	      if(tries%5==0&&id==2)
+	      	max_reset();
+	      */
+	      /*
+	      if(2==id)
+	      {
+		max_reset();
+		max_delay(reset_delay);
+		reset_delay = (reset_delay + 100000)%7000000;
+            	bootloaderscp_setTimeOut(connect_timeout); //0.2s
+            	//connect_timeout = (connect_timeout+100000)%7000000;
+	      }
+	      */
+	      while(wtries)
+		{
+		  packet = bufferfile_open(last_file);
+		  
+          if(stopSend)
+          {
+              pMasterThread->emitResponse("stop download");
+              MAXD_PRINT("stop download\n");
+              return -1;
+          }
+		  if(_verbose)
+          {
+            pMasterThread->emitResponse("try:%d,%d SEND> %s", tries, id, last_cmd);
+		    MAXD_PRINT("try:%d,%d SEND> %s\n", tries, id, last_cmd);
+          }
+
+		   while((count=bufferfile_read(packet, fdata, 64))>0)
+		     {
+		       //int i=0;
+		       //for(i=0;i<count;i++)
+		       //		MAXD_PRINT("%x\n",fdata[i]);
+		       ret = bootloaderscp_write(fdata, count);
+		       //max_delay(1000);
+		       if(ret!=count&&!wtries)	
+			 {
+			   bufferfile_close(packet);
+			   return -1;
+			 }
+		       else if(ret!=count)
+			 {
+			   error = 1;
+			   break;
+			 }
+		       else
+			 error = 0;
+		     }
+                   //MAXD_PRINT("count=%d\n",count);
+		   bufferfile_close(packet);
+		   if(error)
+		     wtries--;
+		   else
+		     break;
+		}
+	      //bufferfile_close(packet);
+	    }
+	}
+      }
+
+      if(NULL == scp_cmd)
+	{
+	  MAXD_PRINT("error: receiving packet failed\n");
+	  //return -1;
+	  goto session_begin;
+	}
+      //MAXD_PRINT("ready to read packet\n");
+      packet = bufferfile_open(file_name);
+      expected_cmd = &expected_cmd_v;
+      memset(expected_cmd, 0x00, sizeof(scpcmd_data));
+      ret=scpcmd__init__(expected_cmd, packet);
+      bufferfile_close(packet);
+
+      //add for error
+      if(ret!=0)
+      {
+	MAXD_PRINT("error init expected_cmd\n");
+	//return -1;
+        goto session_begin;
+      }
+      /*
+      if(expected_cmd->data_len == 0)
+      {
+	MAXD_PRINT("error: unable to read file packet\n");
+	return -1;
+      }
+      */
+      if(scpcmd__ne__(expected_cmd, scp_cmd)&&strcmp(cmd, "hello_reply"))
+	{
+	  MAXD_PRINT("error: received packet is not the expected one\n");
+	  if(_verbose)
+	    {
+	      MAXD_PRINT("======================================\n");
+	      MAXD_PRINT("Expected Command\n");
+	      scpcmd__str__(expected_cmd,maxd_strbuff());
+	      MAXD_PRINT(maxd_strbuff());
+	      MAXD_PRINT("---------------------------------------\n");
+	      MAXD_PRINT("Received Command\n");
+	      scpcmd__str__(scp_cmd,maxd_strbuff());
+	      MAXD_PRINT(maxd_strbuff());
+	      MAXD_PRINT("=======================================\n");
+	    }
+
+	  //if(strcmp(cmd, "hello_reply"))
+	  //  return -1;
+	      goto session_begin;
+	}
+    }
+    else//if(result == 0)
+    {
+      int error = 0;
+      strcpy(last_file, file_name);
+      strcpy(last_cmd,cmd);
+
+      //if(!strcmp(cmd,"connection_request"))
+	//	max_reset();
+
+      wtries = 5;
+      while(wtries)
+	{
+	  packet = bufferfile_open(file_name);
+
+      if(stopSend)
+      {
+          pMasterThread->emitResponse("stop download");
+          MAXD_PRINT("stop download\n");
+          return -1;
+      }
+	  if(_verbose)
+      {
+        pMasterThread->emitResponse("%d SEND> %s",id, cmd);
+	    MAXD_PRINT("%d SEND> %s\n",id, cmd);
+      }
+
+	  while((count=bufferfile_read(packet, fdata, 64))>0)
+	  {
+	    //MAXD_PRINT("before write\n");
+	    ret = bootloaderscp_write(fdata, count);
+	    //max_delay(1000);
+	    if(ret!=count&&!wtries)
+	      {
+		bufferfile_close(packet);
+		return -1;
+	      }
+	    else if(ret!=count)
+	      {
+		error = 1;
+		break;
+	      }
+	    else
+	      error = 0;
+	  }
+	  bufferfile_close(packet);
+	  if(error)
+	    wtries--;
+	  else
+	    break;
+	}
+
+	if(!strcmp(cmd,"connection_request"))
+	{
+	    bootloaderscp_setTimeOut(connect_timeout); //0.2s
+	    //connect_timeout = (connect_timeout+100000)%7000000;
+	}
+	else if(!strcmp(cmd,"del_mem"))
+	    bootloaderscp_setTimeOut(5000000); //5s
+        else if(!strcmp(cmd,"del_data"))
+            bootloaderscp_setTimeOut(5000000); //5ss
+        else if(!strcmp(cmd,"hello_request"))
+            bootloaderscp_setTimeOut(2000000); //5ss
+	else
+	    bootloaderscp_setTimeOut(2000000);//2s
+      //bufferfile_close(packet);
+    }
+  }
+
+  return 0;
+}
+
+#ifdef MAX_DOWNLOAD_RAMBIN
+int serial_sender_main(QString portName,const unsigned char *bin, unsigned int length, char *packet_list_name)
+#else
+int serial_sender_main(char *maxbin_name, char *packet_list_name)
+#endif
+{
+  LINEFILE* cmds_file;
+  int ret = 0;
+
+  MAXD_PRINT("enter serial_sender_main=========\n");
+ 
+ #ifdef MAX_DOWNLOAD_RAMBIN
+ if(strcmp(packet_list_name, "crk")&&strcmp(packet_list_name, "bin")&&strcmp(packet_list_name, "usboff"))
+    {
+      MAXD_PRINT("don't support pakdet list:%s\n", packet_list_name);
+      return -1;
+    }
+  
+  ret = maxrambin_init(bin, length);
+  if(ret!=0)
+  {
+    MAXD_PRINT("maxrambin_init error\n");
+    return ret;
+  }
+ #elif defined(MAX_DOWNLOAD_1BIN)
+  if(strcmp(packet_list_name, "crk")&&strcmp(packet_list_name, "bin")&&strcmp(packet_list_name, "usboff"))
+    {
+      MAXD_PRINT("don't support pakdet list:%s\n", packet_list_name);
+      return -1;
+    }
+  
+  ret = maxbin_init(maxbin_name);
+  if(ret!=0)
+  {
+    MAXD_PRINT("maxbin_init error\n");
+    return ret;
+  }
+  printf("##########maxbin_init result = %d\n", ret);
+  #endif
+
+  cmds_file = linefile_open(packet_list_name);
+  if(cmds_file==NULL)
+  {
+    ret = -1;
+	MAXD_PRINT("incorrect bin!!!!!\n");
+	goto end;
+  }
+  pMasterThread->emitResponse("Searching serial port");
+  if(bootloaderscp__init__(portName)<0)
+  {
+      ret = -1;
+      MAXD_PRINT("can not open serialport\n");
+      pMasterThread->emitResponse("can not open serialport");
+      goto end;
+  }
+  ret = serial_sender_parse_scpcmd_file(cmds_file, 0);
+
+  if(0 == ret)
+    MAXD_PRINT("SCP session %s OK \n",packet_list_name);
+  else
+    MAXD_PRINT("error: SCP session %s FAILED \n",packet_list_name);
+
+  linefile_close(cmds_file);
+  bootloaderscp__finalization__();
+end:
+#ifdef MAX_DOWNLOAD_RAMBIN
+  maxrambin_free();
+#elif defined(MAX_DOWNLOAD_1BIN)
+  maxbin_free();
+#endif
+  return ret;
+}
