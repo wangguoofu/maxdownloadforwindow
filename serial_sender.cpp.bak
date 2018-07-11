@@ -296,10 +296,8 @@ session_begin:
 	    else
 	      error = 0;
 	  }
-
 	  bufferfile_close(packet);
 	  if(error)
-      {
 	    wtries--;
         if(!wtries)
         {

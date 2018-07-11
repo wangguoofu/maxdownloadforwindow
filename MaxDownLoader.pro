@@ -5,6 +5,7 @@
 #-------------------------------------------------
 
 QT       += core gui
+QT       += serialport
 
 greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
 
@@ -40,10 +41,10 @@ SOURCES += \
         serial.cpp \
         serial_sender.cpp \
         masterthread.cpp \
-    qextserialbase.cpp \
-    qextserialenumerator.cpp \
-    qextserialport.cpp \
-    win_qextserialport.cpp
+        qextserialbase.cpp \
+        qextserialport.cpp \
+        win_qextserialport.cpp \
+        qextserialenumerator.cpp
 
 HEADERS += \
         mainwindow.h \
@@ -60,10 +61,10 @@ HEADERS += \
         serial.h \
         serial_sender.h \
         masterthread.h \
-    qextserialbase.h \
-    qextserialenumerator.h \
-    qextserialport.h \
-    win_qextserialport.h
+        qextserialbase.h \
+        qextserialport.h \
+        win_qextserialport.h \
+        qextserialenumerator.h
 
 FORMS += \
         mainwindow.ui

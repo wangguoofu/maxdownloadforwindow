@@ -34,7 +34,7 @@ MainWindow::~MainWindow()
 
 void MainWindow::showResponse(const QString &s)
 {
-    //qDebug()<<s<<endl;
+    qDebug()<<s<<endl;
     ui->textResponse->append(s);
 }
 

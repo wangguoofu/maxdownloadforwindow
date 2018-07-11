@@ -2,6 +2,7 @@
 //#include <Process.h>
 //#include <QCoreApplication>
 //#include <QEvent>
+#include <QDebug>
 #include <QReadWriteLock>
 #include "win_qextserialport.h"
 
@@ -175,7 +176,7 @@ settings, as stored in the Settings structure.
 bool Win_QextSerialPort::open(OpenMode mode) {
 	unsigned long confSize = sizeof(COMMCONFIG);
 	Win_CommConfig.dwSize = confSize;
-	DWORD dwFlagsAndAttributes = 0;
+    DWORD dwFlagsAndAttributes = 0;
 	if (queryMode() == QextSerialBase::EventDriven)
 		dwFlagsAndAttributes += FILE_FLAG_OVERLAPPED;
 
@@ -183,9 +184,22 @@ bool Win_QextSerialPort::open(OpenMode mode) {
     if (mode == QIODevice::NotOpen)
         return isOpen();
     if (!isOpen()) {
+        QString portb;
+        QString portleft=port.mid(3,3);
+        //qDebug()<<"port name is:"<<port<<portleft;
+        int portnum=portleft.toInt();
+        if(portnum<10)
+        {
+            portb=port;
+        }
+        else
+        {
+            portb="\\\\.\\";
+            portb+=port;
+        }
         /*open the port*/
-        Win_Handle=CreateFileA(port.toLatin1().data(), GENERIC_READ|GENERIC_WRITE,
-                              FILE_SHARE_READ|FILE_SHARE_WRITE, NULL, OPEN_EXISTING, dwFlagsAndAttributes, NULL);
+        Win_Handle=CreateFileA(portb.toLatin1().data(), GENERIC_READ|GENERIC_WRITE,
+                              0/*FILE_SHARE_READ|FILE_SHARE_WRITE*/, NULL, OPEN_EXISTING, dwFlagsAndAttributes, NULL);
         if (Win_Handle!=INVALID_HANDLE_VALUE) {
             /*configure port settings*/
             GetCommConfig(Win_Handle, &Win_CommConfig, &confSize);
