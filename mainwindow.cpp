@@ -14,7 +14,7 @@ MainWindow::MainWindow(QWidget *parent) :
     QString com;
     ui->setupUi(this);
 
-    for(i=0; i<50; i++)
+    for(i=0; i<1000; i++)
         ui->comboBox->addItem(com.sprintf("COM%d", i));
 
     connect(&m_thread, &MasterThread::response, this, &MainWindow::showResponse);
